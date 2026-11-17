@@ -1,0 +1,73 @@
+x-api-build: &api-build
+  context: ./backend
+  dockerfile: Dockerfile
+
+# Containers reach Postgres by its service name, so they build their own URL.
+# DATABASE_URL in .env points at localhost for running the app with uv.
+x-container-database-url: &container-database-url postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      # Only this computer can connect; other devices on the network cannot.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrations:
+    build: *api-build
+    environment:
+      DATABASE_URL: *container-database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+
+  api:
+    build: *api-build
+    environment:
+      DATABASE_URL: *container-database-url
+      JWT_PRIVATE_KEY_PATH: /run/secrets/jwt-private.pem
+      JWT_PUBLIC_KEY_PATH: /run/secrets/jwt-public.pem
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_AUDIENCE: ${JWT_AUDIENCE}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      WEB_COOKIE_SECURE: ${WEB_COOKIE_SECURE}
+      WEB_COOKIE_SAMESITE: ${WEB_COOKIE_SAMESITE}
+      ARGON2_MEMORY_COST: ${ARGON2_MEMORY_COST}
+      ARGON2_TIME_COST: ${ARGON2_TIME_COST}
+      ARGON2_PARALLELISM: ${ARGON2_PARALLELISM}
+      ARGON2_HASH_LENGTH: ${ARGON2_HASH_LENGTH}
+      ARGON2_SALT_LENGTH: ${ARGON2_SALT_LENGTH}
+      ACCESS_TOKEN_TTL_MINUTES: ${ACCESS_TOKEN_TTL_MINUTES}
+      REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS}
+      AFK_TIMEOUT_MINUTES: ${AFK_TIMEOUT_MINUTES}
+      LOGIN_RATE_LIMIT: ${LOGIN_RATE_LIMIT}
+      LOGIN_RATE_WINDOW_SECONDS: ${LOGIN_RATE_WINDOW_SECONDS}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      PASS_P12_PATH: /run/secrets/pass.p12
+      PASS_P12_PASSWORD: ${PASS_P12_PASSWORD:-}
+      WWDR_CERT_PATH: /run/secrets/wwdr.cer
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./secrets:/run/secrets:ro
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
